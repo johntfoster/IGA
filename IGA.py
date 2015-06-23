@@ -129,38 +129,31 @@ class NURBS_2D_Shape_Functions(Bspline):
         self.N = Bspline(knot_vector_1, p_1)
         self.M = Bspline(knot_vector_2, p_2)
 
-        self.p_1 = p_1
-        self.p_2 = p_2
-        self.weights = np.array(weights)
+        self.weights = weights
 
 
     def __call__(self, xi, eta, derivative=None):
 
-        numerator = np.einsum('...i,...j', self.N(xi) * self.weights, 
-                                           self.M(eta) * self.weights)
+        numerator = (np.einsum('...i,...j', self.N(xi), self.M(eta)) * 
+                     self.weights)
 
-        W = (np.einsum('...i,i', self.N(xi), self.weights) *  
-             np.einsum('...i,i', self.M(eta), self.weights))
+        W = np.einsum('...i,...j,ij', self.N(xi), self.M(eta), self.weights)
 
         R = numerator / W[:, np.newaxis, np.newaxis]
 
         if derivative == 'xi':
 
-            dW = (np.einsum('...i,i', self.N.d(xi), self.weights) *  
-                  np.einsum('...i,i', self.M(eta), self.weights))
+            dW = np.einsum('...i,...j,ij', self.N.d(xi), self.M(eta), self.weights)
 
-            R = (np.einsum('...i,...j', self.N.d(xi) * self.weights, 
-                 self.M(eta) * self.weights) + dW[:, np.newaxis, np.newaxis] * 
-                 R) / W[:, np.newaxis, np.newaxis]   
+            R = (np.einsum('...i,...j', self.N.d(xi), self.M(eta)) * self.weights 
+                 + dW[:, np.newaxis, np.newaxis] * R) / W[:, np.newaxis, np.newaxis]   
 
         if derivative == 'eta':
 
-            dW = (np.einsum('...i,i', self.N(xi), self.weights) *  
-                  np.einsum('...i,i', self.M.d(eta), self.weights))
+            dW = np.einsum('...i,...j,ij', self.N(xi), self.M.d(eta), self.weights)
 
-            R = (np.einsum('...i,...j', self.N(xi) * self.weights, 
-                 self.M.d(eta) * self.weights) + dW[:, np.newaxis, np.newaxis] *
-                 R) / W[:, np.newaxis, np.newaxis]   
+            R = (np.einsum('...i,...j', self.N(xi), self.M.d(eta)) * self.weights 
+                 + dW[:, np.newaxis, np.newaxis] * R) / W[:, np.newaxis, np.newaxis]   
         
         return R
 
@@ -209,19 +202,19 @@ class IGA2D(NURBS_2D_Shape_Functions):
                                           knot_vector_2, p_2,
                                           weights)
 
-        self.p_1 = p_1
-        self.p_2 = p_2
 
+        self.x = control_points[:,0]
+        self.y = control_points[:,1]
 
-        self.num_of_basis_functions_1 = len(self.R.N.knot_vector) - p_1 - 1
-        self.num_of_basis_functions_2 = len(self.R.M.knot_vector) - p_2 - 1
+        self.num_of_basis_functions_1 = len(self.R.N.knot_vector) - self.R.N.p - 1
+        self.num_of_basis_functions_2 = len(self.R.M.knot_vector) - self.R.M.p - 1
 
         self.num_of_global_basis_functions = (self.num_of_basis_functions_1 *
                                               self.num_of_basis_functions_2)
 
 
-        self.num_of_elements = ((self.num_of_basis_functions_1 - p_1) *
-                                (self.num_of_basis_functions_2 - p_2))
+        self.num_of_elements = ((self.num_of_basis_functions_1 - self.R.N.p) *
+                                (self.num_of_basis_functions_2 - self.R.M.p))
 
 
         self.nurbs_coords = self.__build_nurbs_coord_array()
@@ -265,8 +258,8 @@ class IGA2D(NURBS_2D_Shape_Functions):
         #basis functions to determine the "lower left-hand" corner of the 
         #elements.  This procedure accounts for elements of zero measure due 
         #to possibly open knot vectors.
-        i_arr = np.arange(self.p_1, self.num_of_basis_functions_1, dtype=np.int)
-        j_arr = np.arange(self.p_2, self.num_of_basis_functions_2, dtype=np.int)
+        i_arr = np.arange(self.R.N.p, self.num_of_basis_functions_1, dtype=np.int)
+        j_arr = np.arange(self.R.M.p, self.num_of_basis_functions_2, dtype=np.int)
         
         #Array of element corner indices pairs, i.e. (i,j)
         elem_corner = [(i,j) for i in j_arr for j in i_arr]
@@ -278,7 +271,7 @@ class IGA2D(NURBS_2D_Shape_Functions):
         #the order with the [::-1] to be consistent with the convention that
         #the arrays start with the corner basis id and move backwards in \xi
         #and \eta.  Excuse the 
-        return  np.array([(global_basis_ids[(i-self.p_2):(i+1),(j-self.p_1):(j+1)].flatten())[::-1] 
+        return  np.array([(global_basis_ids[(i-self.R.M.p):(i+1),(j-self.R.N.p):(j+1)].flatten())[::-1] 
             for i,j in elem_corner])
         
 
