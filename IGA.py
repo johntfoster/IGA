@@ -1,6 +1,8 @@
 from functools import partial
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
 
 
 class Bspline(object):
@@ -89,7 +91,7 @@ class Bspline(object):
         x_min = np.min(self.knot_vector)
         x_max = np.max(self.knot_vector)
         
-        x = np.linspace(x_min, x_max, num=1000)
+        x = np.linspace(x_min, x_max, num=1000, endpoint=False)
         
         N = self(x).T
         
@@ -108,7 +110,7 @@ class Bspline(object):
         x_min = np.min(self.knot_vector)
         x_max = np.max(self.knot_vector)
         
-        x = np.linspace(x_min, x_max, num=1000)
+        x = np.linspace(x_min, x_max, num=1000, endpoint=False)
         
         N = self.d(x).T
         
@@ -140,7 +142,7 @@ class NURBS_2D_Shape_Functions(Bspline):
         W = (np.einsum('...i,i', self.N(xi), self.weights) *  
              np.einsum('...i,i', self.M(eta), self.weights))
 
-        R = numerator / W
+        R = numerator / W[:, np.newaxis, np.newaxis]
 
         if derivative == 'xi':
 
@@ -148,7 +150,8 @@ class NURBS_2D_Shape_Functions(Bspline):
                   np.einsum('...i,i', self.M(eta), self.weights))
 
             R = (np.einsum('...i,...j', self.N.d(xi) * self.weights, 
-                 self.M(eta) * self.weights) + dW * R) / W   
+                 self.M(eta) * self.weights) + dW[:, np.newaxis, np.newaxis] * 
+                 R) / W[:, np.newaxis, np.newaxis]   
 
         if derivative == 'eta':
 
@@ -156,7 +159,8 @@ class NURBS_2D_Shape_Functions(Bspline):
                   np.einsum('...i,i', self.M.d(eta), self.weights))
 
             R = (np.einsum('...i,...j', self.N(xi) * self.weights, 
-                 self.M.d(eta) * self.weights) + dW * R) / W   
+                 self.M.d(eta) * self.weights) + dW[:, np.newaxis, np.newaxis] *
+                 R) / W[:, np.newaxis, np.newaxis]   
         
         return R
 
@@ -167,14 +171,39 @@ class NURBS_2D_Shape_Functions(Bspline):
     def d_eta(self, xi, eta):
 
         return self.__call__(xi, eta, derivative='eta')
+                
 
+    def plot(self, shape_function_number=0, derivative=None):
+
+        xi_min = np.min(self.N.knot_vector)
+        xi_max = np.max(self.N.knot_vector)
+
+        eta_min = np.min(self.M.knot_vector)
+        eta_max = np.max(self.M.knot_vector)
+
+        xi = np.linspace(xi_min, xi_max, num=50, endpoint=False)
+        eta = np.linspace(eta_min, eta_max, num=50, endpoint=False)
+
+        x, y = np.meshgrid(xi, eta)
+
+        basis = self(x.flatten(), y.flatten(), derivative)
+
+        z = [basis[:,i,j].reshape(x.shape) for i in range(3) for j in range(3)]
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        surf = ax.plot_surface(x, y, z[shape_function_number], rstride=1, 
+                               cstride=1, cmap=cm.coolwarm, linewidth=0, 
+                               antialiased=False)
+        fig.colorbar(surf, shrink=0.5, aspect=5)
         
 
 
 class IGA2D(NURBS_2D_Shape_Functions):
 
 
-    def __init__(self, knot_vector_1, p_1, knot_vector_2, p_2, weights):
+    def __init__(self, knot_vector_1, p_1, knot_vector_2, p_2, 
+                 control_points, weights):
 
         self.R = NURBS_2D_Shape_Functions(knot_vector_1, p_1, 
                                           knot_vector_2, p_2,
