@@ -203,8 +203,8 @@ class IGA2D(NURBS_2D_Shape_Functions):
                                           weights)
 
 
-        self.x = control_points[:,0]
-        self.y = control_points[:,1]
+        self.x = control_points[:,:,0].flatten()
+        self.y = control_points[:,:,1].flatten()
 
         self.num_of_basis_functions_1 = len(self.R.N.knot_vector) - self.R.N.p - 1
         self.num_of_basis_functions_2 = len(self.R.M.knot_vector) - self.R.M.p - 1
@@ -233,7 +233,7 @@ class IGA2D(NURBS_2D_Shape_Functions):
         j_arr = np.arange(self.num_of_basis_functions_2, dtype=np.int)
 
         #Construct the coordinate array
-        return np.array([ (i, j) for j in j_arr for i in i_arr ], dtype=np.int)
+        return np.array([ (i, j) for i in j_arr for j in i_arr ], dtype=np.int)
 
     def __build_connectivity_array(self):
         """
@@ -277,32 +277,48 @@ class IGA2D(NURBS_2D_Shape_Functions):
 
     def compute_jacobian_matrix_and_inverse(self, xi, eta):
             """
-               Compute the Jacobian matrix, Det(J) and B for every element
+               Compute the Jacobian matrix, Det(J), 
+               given the integration points xi and eta
             """
+
+            con = self.connectivity_array
+            number_of_basis_functions = len(self.nurbs_coords)
+            number_of_elements = len(self.connectivity_array)
             
-            ni = self.nurbs_coords[self.connectivity_array[:,0],0]
-            nj = self.nurbs_coords[self.connectivity_array[:,0],1]
+            ni = self.nurbs_coords[con[:,0],0]
+            nj = self.nurbs_coords[con[:,0],1]
 
-            xi = ((self.R.N.knot_vector[ni+1] - self.R.N.knot_vector[ni]) * xi[:, np.newaxis] + 
-                  (self.R.N.knot_vector[ni+1] - self.R.N.knot_vector[ni])) / 2.0
+            xi = (((self.R.N.knot_vector[ni+1] - self.R.N.knot_vector[ni]) * xi[:, np.newaxis] + 
+                  (self.R.N.knot_vector[ni+1] + self.R.N.knot_vector[ni])) / 2.0).flatten()
 
-            eta = ((self.R.M.knot_vector[ni+1] - self.R.M.knot_vector[ni]) * xi[:, np.newaxis] + 
-                   (self.R.M.knot_vector[ni+1] - self.R.M.knot_vector[ni])) / 2.0
+            eta = (((self.R.M.knot_vector[nj+1] - self.R.M.knot_vector[nj]) * eta[:, np.newaxis] + 
+                   (self.R.M.knot_vector[nj+1] + self.R.M.knot_vector[nj])) / 2.0).flatten()
 
 
-            #Understand we are broadcasting the dot product to every element
-            #J11 = np.dot(x[con], self.dNdxi(xi))
-            #J12 = np.dot(y[con], self.dNdxi(xi))
-            #J21 = np.dot(x[con], self.dNdeta(eta))
-            #J22 = np.dot(y[con], self.dNdeta(eta))
+            dRdxi = self.R.d_xi(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
+            dRdeta = self.R.d_eta(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
+
+            #Understand we are broadcasting the dot product to every element/integration point
+            row_idx = np.arange(number_of_elements, dtype=np.int)
+
+            J11 = np.sum(self.x[con] * dRdxi[:, row_idx[:,np.newaxis], con], axis=2)
+            J12 = np.sum(self.y[con] * dRdxi[:, row_idx[:,np.newaxis], con], axis=2)
+            J21 = np.sum(self.x[con] * dRdeta[:, row_idx[:,np.newaxis], con], axis=2)
+            J22 = np.sum(self.y[con] * dRdeta[:, row_idx[:,np.newaxis], con], axis=2)
             
-            ##detJ is a vector containing the Jacobian determinate for every element
-            #self.detJ = J11 * J22 - J12 * J21
+            #detJ is a vector containing the Jacobian determinate for every element
+            #and every integration point
+            self.detJ = J11 * J22 - J12 * J21
             
-            #self.Jinv11 =  J22 / self.detJ
-            #self.Jinv12 = -J12 / self.detJ
-            #self.Jinv21 = -J21 / self.detJ
-            #self.Jinv22 =  J11 / self.detJ
+            self.Jinv11 =  J22 / self.detJ
+            self.Jinv12 = -J12 / self.detJ
+            self.Jinv21 = -J21 / self.detJ
+            self.Jinv22 =  J11 / self.detJ
+
+            dxidxi = (self.R.N.knot_vector[ni+1] - self.R.N.knot_vector[ni]) / 2.0
+            detadeta = (self.R.M.knot_vector[nj+1] - self.R.M.knot_vector[nj]) / 2.0
+
+            self.detJ = self.detJ * dxidxi * detadeta
         
         
     #def compute_B_matrix(self, xi, eta):
