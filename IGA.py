@@ -4,6 +4,7 @@ import numpy as np
 
 from scipy.special import legendre
 from scipy.optimize import fsolve
+import scipy.sparse
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -157,26 +158,26 @@ class NURBS_2D_Shape_Functions(Bspline):
 
     def __call__(self, xi, eta, derivative=None):
 
-        numerator = (np.einsum('...i,...j', self.N(xi), self.M(eta)) * 
+        numerator = (np.einsum('...i,...j', self.M(eta), self.N(xi)) * 
                      self.weights)
 
 
-        W = np.einsum('...i,...j,ij', self.N(xi), self.M(eta), self.weights)
+        W = np.einsum('...i,...j,ij', self.M(eta), self.N(xi), self.weights)
 
         R = numerator / W[:, None, None]
 
         if derivative == 'xi':
 
-            dW = np.einsum('...i,...j,ij', self.N.d(xi), self.M(eta), self.weights)
+            dW = np.einsum('...i,...j,ij', self.M(eta), self.N.d(xi), self.weights)
 
-            R = (np.einsum('...i,...j', self.N.d(xi), self.M(eta)) * self.weights 
+            R = (np.einsum('...i,...j', self.M(eta), self.N.d(xi)) * self.weights 
                  + dW[:, None, None] * R) / W[:, None, None]   
 
         if derivative == 'eta':
 
-            dW = np.einsum('...i,...j,ij', self.N(xi), self.M.d(eta), self.weights)
+            dW = np.einsum('...i,...j,ij', self.M.d(eta), self.N(xi), self.weights)
 
-            R = (np.einsum('...i,...j', self.N(xi), self.M.d(eta)) * self.weights 
+            R = (np.einsum('...i,...j', self.M.d(eta), self.N(xi)) * self.weights 
                  + dW[:, None, None] * R) / W[:, None, None]   
         
         return R
@@ -205,7 +206,7 @@ class NURBS_2D_Shape_Functions(Bspline):
 
         basis = self(x.flatten(), y.flatten(), derivative)
 
-        z = [basis[:,j,i].reshape(x.shape) for i in range(basis.shape[2]) for j in range(basis.shape[1])]
+        z = [basis[:,i,j].reshape(x.shape) for i in range(basis.shape[1]) for j in range(basis.shape[2])]
 
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -243,6 +244,8 @@ class IGA2D(NURBS_2D_Shape_Functions):
 
         self.K = np.zeros((self.num_of_global_basis_functions, 
                            self.num_of_global_basis_functions))
+
+        self.F = np.zeros(self.num_of_global_basis_functions)
 
         self.nurbs_coords = self.__build_nurbs_coord_array()
 
@@ -345,7 +348,6 @@ class IGA2D(NURBS_2D_Shape_Functions):
         #axis is # of elements, 3rd is values of shape functions
         dRdxi = self.R.d_xi(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
         dRdeta = self.R.d_eta(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
-        print self.R.d_xi(xi, eta)
 
         #Store only the shape function values with support on an element
         #shape=(# Gauss points, # of elements, # of nonzero values of shape functions)
@@ -355,13 +357,12 @@ class IGA2D(NURBS_2D_Shape_Functions):
         #These are dot products, x = x_i . R_i, broadcast to every integration point
         #shape = (# Gauss points, # of elements)
         J11 = np.sum(self.x[con] * dRdxi, axis=2)
-        J12 = np.sum(self.x[con] * dRdeta, axis=2)
-        J21 = np.sum(self.y[con] * dRdxi, axis=2)
+        J12 = np.sum(self.y[con] * dRdxi, axis=2)
+        J21 = np.sum(self.x[con] * dRdeta, axis=2)
         J22 = np.sum(self.y[con] * dRdeta, axis=2)
         
         #Compute the determinate of J and inverse
         detJ = J11 * J22 - J12 * J21
-
         
         Jinv11 =  J22 / detJ
         Jinv12 = -J12 / detJ
@@ -377,19 +378,19 @@ class IGA2D(NURBS_2D_Shape_Functions):
         #det(B) is product along diagonal for a diagonal matrix
         #
         #Also multiply the quadrature weights in at this point
-        detJ = detJ * dxidxi * detadeta * wt_xi * wt_eta
+        detJ = detJ * dxidxi * detadeta * wt_xi[:, None] * wt_eta[:, None]
 
         #The shape functions in physical coordinates
-        self.dRdx = (dRdxi * Jinv11[:, np.arange(Jinv11.shape[0]), np.newaxis] +
-                     dRdeta * Jinv12[:, np.arange(Jinv12.shape[0]), np.newaxis])
+        self.dRdx = (dRdxi * Jinv11[:, None, np.arange(Jinv11.shape[0])] +
+                     dRdeta * Jinv12[:, None, np.arange(Jinv12.shape[0])])
 
-        self.dRdy = (dRdxi * Jinv21[:, np.arange(Jinv21.shape[0]), np.newaxis] +
-                     dRdeta * Jinv22[:, np.arange(Jinv22.shape[0]), np.newaxis])
+        self.dRdy = (dRdxi * Jinv21[:, None, np.arange(Jinv21.shape[0])] +
+                     dRdeta * Jinv22[:, None, np.arange(Jinv22.shape[0])])
          
         #The element stiffness matrices.
         return np.sum((np.einsum('...i,...j', self.dRdx, self.dRdx) + 
-                     np.einsum('...i,...j', self.dRdy, self.dRdy)) * 
-                     detJ, axis=0)
+                       np.einsum('...i,...j', self.dRdy, self.dRdy)) * 
+                       detJ[:,:,None,None], axis=0)
 
 
     def assemble(self):
@@ -402,23 +403,48 @@ class IGA2D(NURBS_2D_Shape_Functions):
                               self.connectivity_array[i])
             self.K[idx_grid]  += ke[i]
 
-    def apply_bcs(self, nodes, values):
 
-        row_replace = np.zeros(self.num_of_elements)
+    def apply_bcs(self, basis_ids, values):
 
-        for value_idx, node in enumerate(nodes):
+        row_replace = np.zeros(self.num_of_global_basis_functions)
 
-            self.K[node] = row_replace
-            self.K[node, node] = 1
+        for value_idx, basis_id in enumerate(basis_ids):
 
-            self.F[node] = values[value_idx]
+            self.K[basis_id] = row_replace
+            self.K[basis_id, basis_id] = 1
+
+            self.F[basis_id] = values[value_idx]
 
 
     def solve(self):
 
         self.K = scipy.sparse.csr_matrix(self.K)
 
-        return scipy.sparse.linalg.spsolve(self.K, self.F)
+        self.solution = scipy.sparse.linalg.spsolve(self.K, self.F)
 
+    def get_solution(self):
 
-        
+        return self.solution
+
+    def plot_solution(self):
+
+        xi_min = np.min(self.R.N.knot_vector)
+        xi_max = np.max(self.R.N.knot_vector)
+
+        eta_min = np.min(self.R.M.knot_vector)
+        eta_max = np.max(self.R.M.knot_vector)
+
+        xi = np.linspace(xi_min, xi_max, num=50, endpoint=False)
+        eta = np.linspace(eta_min, eta_max, num=50, endpoint=False)
+
+        x, y = np.meshgrid(xi, eta)
+
+        basis = self.R(x.flatten(), y.flatten())
+
+        z = np.einsum('...ij,ij', basis, 
+                      self.solution.reshape(basis.shape[1:])).reshape(x.shape)
+
+        plot = plt.contourf(x, y, z, cmap="coolwarm")
+        plt.colorbar(plot, orientation='horizontal', shrink=0.6);
+        plt.clim(0,100)
+        plt.axes().set_aspect('equal')
