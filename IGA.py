@@ -1,8 +1,30 @@
-from functools import partial
+#!/usr/bin/env python
+
 import numpy as np
+
+from scipy.special import legendre
+from scipy.optimize import fsolve
+
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
+
+
+def compute_gauss_points_and_weights(order):
+
+    coefs = legendre(order)
+
+    p = np.poly1d(coefs)  
+
+    coefs_prime = (np.arange(len(coefs) + 1)[::-1] * coefs)[:-1]
+
+    p_prime = np.poly1d(coefs_prime)  
+
+    points = fsolve(p, np.linspace(-1, 1, num=order))
+
+    weights = 2.0 / ((1 - points * points) * p_prime(points) * p_prime(points))
+
+    return points, weights
 
 
 class Bspline(object):
@@ -100,6 +122,7 @@ class Bspline(object):
             plt.plot(x,n)
             
         return plt.show()
+
     
     def dplot(self):
         """
@@ -137,23 +160,24 @@ class NURBS_2D_Shape_Functions(Bspline):
         numerator = (np.einsum('...i,...j', self.N(xi), self.M(eta)) * 
                      self.weights)
 
+
         W = np.einsum('...i,...j,ij', self.N(xi), self.M(eta), self.weights)
 
-        R = numerator / W[:, np.newaxis, np.newaxis]
+        R = numerator / W[:, None, None]
 
         if derivative == 'xi':
 
             dW = np.einsum('...i,...j,ij', self.N.d(xi), self.M(eta), self.weights)
 
             R = (np.einsum('...i,...j', self.N.d(xi), self.M(eta)) * self.weights 
-                 + dW[:, np.newaxis, np.newaxis] * R) / W[:, np.newaxis, np.newaxis]   
+                 + dW[:, None, None] * R) / W[:, None, None]   
 
         if derivative == 'eta':
 
             dW = np.einsum('...i,...j,ij', self.N(xi), self.M.d(eta), self.weights)
 
             R = (np.einsum('...i,...j', self.N(xi), self.M.d(eta)) * self.weights 
-                 + dW[:, np.newaxis, np.newaxis] * R) / W[:, np.newaxis, np.newaxis]   
+                 + dW[:, None, None] * R) / W[:, None, None]   
         
         return R
 
@@ -181,7 +205,7 @@ class NURBS_2D_Shape_Functions(Bspline):
 
         basis = self(x.flatten(), y.flatten(), derivative)
 
-        z = [basis[:,i,j].reshape(x.shape) for i in range(3) for j in range(3)]
+        z = [basis[:,i,j].reshape(x.shape) for i in range(basis.shape[2]) for j in range(basis.shape[1])]
 
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -212,6 +236,9 @@ class IGA2D(NURBS_2D_Shape_Functions):
         self.num_of_global_basis_functions = (self.num_of_basis_functions_1 *
                                               self.num_of_basis_functions_2)
 
+        self.K = np.zeros((self.num_of_global_basis_functions, 
+                           self.num_of_global_basis_functions))
+
 
         self.num_of_elements = ((self.num_of_basis_functions_1 - self.R.N.p) *
                                 (self.num_of_basis_functions_2 - self.R.M.p))
@@ -233,7 +260,7 @@ class IGA2D(NURBS_2D_Shape_Functions):
         j_arr = np.arange(self.num_of_basis_functions_2, dtype=np.int)
 
         #Construct the coordinate array
-        return np.array([ (i, j) for i in j_arr for j in i_arr ], dtype=np.int)
+        return np.array([ (i, j) for j in j_arr for i in i_arr ], dtype=np.int)
 
     def __build_connectivity_array(self):
         """
@@ -245,7 +272,7 @@ class IGA2D(NURBS_2D_Shape_Functions):
         """
 
         #The total # of basis functions
-        number_of_basis_functions = len(self.nurbs_coords)
+        number_of_basis_functions = self.num_of_global_basis_functions
 
         #The global basis function id's
         global_basis_ids = np.arange(number_of_basis_functions, dtype=np.int)
@@ -275,67 +302,122 @@ class IGA2D(NURBS_2D_Shape_Functions):
             for i,j in elem_corner])
         
 
-    def compute_jacobian_matrix_and_inverse(self, xi, eta):
-            """
-               Compute the Jacobian matrix, Det(J), 
-               given the integration points xi and eta
-            """
+    def __compute_element_stiffness(self):
+        """
+           Computes the element stiffness matrix
+        """
 
-            con = self.connectivity_array
-            number_of_basis_functions = len(self.nurbs_coords)
-            number_of_elements = len(self.connectivity_array)
-            
-            ni = self.nurbs_coords[con[:,0],0]
-            nj = self.nurbs_coords[con[:,0],1]
-
-            xi = (((self.R.N.knot_vector[ni+1] - self.R.N.knot_vector[ni]) * xi[:, np.newaxis] + 
-                  (self.R.N.knot_vector[ni+1] + self.R.N.knot_vector[ni])) / 2.0).flatten()
-
-            eta = (((self.R.M.knot_vector[nj+1] - self.R.M.knot_vector[nj]) * eta[:, np.newaxis] + 
-                   (self.R.M.knot_vector[nj+1] + self.R.M.knot_vector[nj])) / 2.0).flatten()
-
-
-            dRdxi = self.R.d_xi(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
-            dRdeta = self.R.d_eta(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
-
-            #Understand we are broadcasting the dot product to every element/integration point
-            row_idx = np.arange(number_of_elements, dtype=np.int)
-
-            J11 = np.sum(self.x[con] * dRdxi[:, row_idx[:,np.newaxis], con], axis=2)
-            J12 = np.sum(self.y[con] * dRdxi[:, row_idx[:,np.newaxis], con], axis=2)
-            J21 = np.sum(self.x[con] * dRdeta[:, row_idx[:,np.newaxis], con], axis=2)
-            J22 = np.sum(self.y[con] * dRdeta[:, row_idx[:,np.newaxis], con], axis=2)
-            
-            #detJ is a vector containing the Jacobian determinate for every element
-            #and every integration point
-            self.detJ = J11 * J22 - J12 * J21
-            
-            self.Jinv11 =  J22 / self.detJ
-            self.Jinv12 = -J12 / self.detJ
-            self.Jinv21 = -J21 / self.detJ
-            self.Jinv22 =  J11 / self.detJ
-
-            dxidxi = (self.R.N.knot_vector[ni+1] - self.R.N.knot_vector[ni]) / 2.0
-            detadeta = (self.R.M.knot_vector[nj+1] - self.R.M.knot_vector[nj]) / 2.0
-
-            self.detJ = self.detJ * dxidxi * detadeta
+        con = self.connectivity_array
+        number_of_basis_functions = self.num_of_global_basis_functions
+        number_of_elements = self.num_of_elements
         
+        #The knot indices cooresponding to the nurbs coordinates 
+        #where elements begin
+        ni = self.nurbs_coords[con[:,0],0]
+        nj = self.nurbs_coords[con[:,0],1]
+
+        #Compute the Gauss quadrature points to integrate each shape function
+        #to full order
+        xi_, wt_xi_ = compute_gauss_points_and_weights(self.R.N.p + 1)
+        eta_, wt_eta_ = compute_gauss_points_and_weights(self.R.M.p + 1)
+
+        #Create all the quadrature point tuples
+        xi, eta = np.meshgrid(xi_, eta_)
+        wt_xi, wt_eta = np.meshgrid(wt_xi_, wt_eta_)
+
+        #Flatten arrays containing quadrature points and weights
+        xi = xi.flatten()
+        eta = eta.flatten()
+        wt_xi = wt_xi.flatten()
+        wt_eta = wt_eta.flatten()
+
+        #Takes Gauss integration points into parameter space, has structure
+        #xi_1 -> xi_1_el1, xi_1_el2, xi_1_el3, ...
+        #xi_2 -> xi_2_el1, xi_2_el2, xi_2_el3, ...
+        #flattened into one long array
+        xi = (((self.R.N.knot_vector[ni+1] - self.R.N.knot_vector[ni]) * xi[:, np.newaxis] + 
+              (self.R.N.knot_vector[ni+1] + self.R.N.knot_vector[ni])) / 2.0).flatten()
+
+        eta = (((self.R.M.knot_vector[nj+1] - self.R.M.knot_vector[nj]) * eta[:, np.newaxis] + 
+               (self.R.M.knot_vector[nj+1] + self.R.M.knot_vector[nj])) / 2.0).flatten()
+
+        #Evaluate basis functions. 1st axis is the # of Gauss integration points, 2nd
+        #axis is # of elements, 3rd is values of shape functions
+        dRdxi = self.R.d_xi(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
+        dRdeta = self.R.d_eta(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
+
+        #Store only the shape function values with support on an element
+        #shape=(# Gauss points, # of elements, # of nonzero values of shape functions)
+        dRdxi = dRdxi[:, np.arange(con.shape[0])[:, np.newaxis], con]
+        dRdeta = dRdeta[:, np.arange(con.shape[0])[:, np.newaxis], con]
+
+        #These are dot products, x = x_i . R_i, broadcast to every integration point
+        #shape = (# Gauss points, # of elements)
+        J11 = np.sum(self.x[con] * dRdxi, axis=2)
+        J12 = np.sum(self.x[con] * dRdeta, axis=2)
+        J21 = np.sum(self.y[con] * dRdxi, axis=2)
+        J22 = np.sum(self.y[con] * dRdeta, axis=2)
         
-    #def compute_B_matrix(self, xi, eta):
-        #"""Computes the B matrix for a given xi and eta"""
+        #Compute the determinate of J and inverse
+        detJ = J11 * J22 - J12 * J21
+
         
-        ##Returns detJ and Jinv components for this xi and eta
-        #self.compute_jacobian_matrix_and_inverse(xi, eta)
+        Jinv11 =  J22 / detJ
+        Jinv12 = -J12 / detJ
+        Jinv21 = -J21 / detJ
+        Jinv22 =  J11 / detJ
+
+        #Gradient of mapping between Gauss coords and parametric coords
+        dxidxi = (self.R.N.knot_vector[ni+1] - self.R.N.knot_vector[ni]) / 2.0
+        detadeta = (self.R.M.knot_vector[nj+1] - self.R.M.knot_vector[nj]) / 2.0
+
+        #Jacobian determinate of mapping from physical to Gauss coords.
+        #Uses the fact that det(A*B) = det(A) * deta(B) and 
+        #det(B) is product along diagonal for a diagonal matrix
+        #
+        #Also multiply the quadrature weights in at this point
+        detJ = detJ * dxidxi * detadeta * wt_xi * wt_eta
+
+        #The shape functions in physical coordinates
+        self.dRdx = (dRdxi * Jinv11[:, np.arange(Jinv11.shape[0]), np.newaxis] +
+                     dRdeta * Jinv12[:, np.arange(Jinv12.shape[0]), np.newaxis])
+
+        self.dRdy = (dRdxi * Jinv21[:, np.arange(Jinv21.shape[0]), np.newaxis] +
+                     dRdeta * Jinv22[:, np.arange(Jinv22.shape[0]), np.newaxis])
+         
+        #The element stiffness matrices.
+        return np.sum((np.einsum('...i,...j', self.dRdx, self.dRdx) + 
+                     np.einsum('...i,...j', self.dRdy, self.dRdy)) * 
+                     detJ, axis=0)
+
+
+    def assemble(self):
+
+        ke = self.__compute_element_stiffness()
+
+        for i in range(self.num_of_elements):
+
+            idx_grid = np.ix_(self.connectivity_array[i], 
+                              self.connectivity_array[i])
+            self.K[idx_grid]  += ke[i]
+
+    def apply_bcs(self, nodes, values):
+
+        row_replace = np.zeros(self.num_of_elements)
+
+        for value_idx, node in enumerate(nodes):
+
+            self.K[node] = row_replace
+            self.K[node, node] = 1
+
+            self.F[node] = values[value_idx]
+
+
+    def solve(self):
+
+        self.K = scipy.sparse.csr_matrix(self.K)
+
+        return scipy.sparse.linalg.spsolve(self.K, self.F)
+
+
         
-        
-        #Nmat = np.zeros((3, 4), dtype=np.double)
-        #Nmat[0,:] = self.dNdxi(xi)
-        #Nmat[1,:] = self.dNdeta(eta)
-        #Nmat[2,:] = self.N(xi, eta)
-        
-        #zero = np.zeros(len(self.detJ))
-        #one = np.ones(len(self.detJ))
-        
-        #Jmat = np.array([[self.Jinv11, self.Jinv12, zero],
-                         #[self.Jinv21, self.Jinv22, zero],
-                         #[       zero,        zero,  one]])
