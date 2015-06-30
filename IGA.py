@@ -205,7 +205,7 @@ class NURBS_2D_Shape_Functions(Bspline):
 
         basis = self(x.flatten(), y.flatten(), derivative)
 
-        z = [basis[:,i,j].reshape(x.shape) for i in range(basis.shape[2]) for j in range(basis.shape[1])]
+        z = [basis[:,j,i].reshape(x.shape) for i in range(basis.shape[2]) for j in range(basis.shape[1])]
 
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -230,19 +230,19 @@ class IGA2D(NURBS_2D_Shape_Functions):
         self.x = control_points[:,:,0].flatten()
         self.y = control_points[:,:,1].flatten()
 
-        self.num_of_basis_functions_1 = len(self.R.N.knot_vector) - self.R.N.p - 1
-        self.num_of_basis_functions_2 = len(self.R.M.knot_vector) - self.R.M.p - 1
+        self.num_of_basis_functions_1 = (self.R.N.knot_vector.shape[0] - 
+                                         self.R.N.p - 1)
+        self.num_of_basis_functions_2 = (self.R.M.knot_vector.shape[0] - 
+                                         self.R.M.p - 1)
 
         self.num_of_global_basis_functions = (self.num_of_basis_functions_1 *
                                               self.num_of_basis_functions_2)
 
-        self.K = np.zeros((self.num_of_global_basis_functions, 
-                           self.num_of_global_basis_functions))
-
-
         self.num_of_elements = ((self.num_of_basis_functions_1 - self.R.N.p) *
                                 (self.num_of_basis_functions_2 - self.R.M.p))
 
+        self.K = np.zeros((self.num_of_global_basis_functions, 
+                           self.num_of_global_basis_functions))
 
         self.nurbs_coords = self.__build_nurbs_coord_array()
 
@@ -289,7 +289,7 @@ class IGA2D(NURBS_2D_Shape_Functions):
         j_arr = np.arange(self.R.M.p, self.num_of_basis_functions_2, dtype=np.int)
         
         #Array of element corner indices pairs, i.e. (i,j)
-        elem_corner = [(i,j) for i in j_arr for j in i_arr]
+        elem_corner = [(i,j) for j in j_arr for i in i_arr]
 
         #Constructs the connectivity array.  This does a slice from the element
         #corner location (i,j), backwards by p_1 in the \xi direction and p_2
@@ -298,7 +298,7 @@ class IGA2D(NURBS_2D_Shape_Functions):
         #the order with the [::-1] to be consistent with the convention that
         #the arrays start with the corner basis id and move backwards in \xi
         #and \eta.  Excuse the 
-        return  np.array([(global_basis_ids[(i-self.R.M.p):(i+1),(j-self.R.N.p):(j+1)].flatten())[::-1] 
+        return  np.array([(global_basis_ids[(j-self.R.M.p):(j+1),(i-self.R.N.p):(i+1)].flatten())[::-1] 
             for i,j in elem_corner])
         
 
@@ -345,6 +345,7 @@ class IGA2D(NURBS_2D_Shape_Functions):
         #axis is # of elements, 3rd is values of shape functions
         dRdxi = self.R.d_xi(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
         dRdeta = self.R.d_eta(xi, eta).reshape(-1, number_of_elements, number_of_basis_functions)
+        print self.R.d_xi(xi, eta)
 
         #Store only the shape function values with support on an element
         #shape=(# Gauss points, # of elements, # of nonzero values of shape functions)
