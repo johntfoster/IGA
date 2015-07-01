@@ -50,8 +50,13 @@ class Bspline(object):
         
     def __basis0(self, xi):
         """Order zero basis"""
-        return np.where(np.all([self.knot_vector[:-1] <=  xi[:, np.newaxis], 
-            xi[:,np.newaxis] < self.knot_vector[1:]],axis=0), 1.0, 0.0)
+
+        cond1 = xi[:, None] == self.knot_vector[1:]
+        cond2 = np.array(self.knot_vector[:-1]) <=  xi[:, None]
+        cond3 = xi[:, None] < np.array(self.knot_vector[1:]) 
+
+        return np.where(cond1, 1.0, np.where(cond2 & cond3, 1.0, 0.0))
+
     
     def __basis(self, xi, p, compute_derivatives=False):
         """
@@ -448,3 +453,4 @@ class IGA2D(NURBS_2D_Shape_Functions):
         plt.colorbar(plot, orientation='horizontal', shrink=0.6);
         plt.clim(0,100)
         plt.axes().set_aspect('equal')
+
