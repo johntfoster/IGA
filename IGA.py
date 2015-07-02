@@ -119,7 +119,7 @@ class Bspline(object):
         x_min = np.min(self.knot_vector)
         x_max = np.max(self.knot_vector)
         
-        x = np.linspace(x_min, x_max, num=1000, endpoint=False)
+        x = np.linspace(x_min, x_max, num=1000)
         
         N = self(x).T
         
@@ -139,7 +139,7 @@ class Bspline(object):
         x_min = np.min(self.knot_vector)
         x_max = np.max(self.knot_vector)
         
-        x = np.linspace(x_min, x_max, num=1000, endpoint=False)
+        x = np.linspace(x_min, x_max, num=1000)
         
         N = self.d(x).T
         
@@ -204,8 +204,8 @@ class NURBS_2D_Shape_Functions(Bspline):
         eta_min = np.min(self.M.knot_vector)
         eta_max = np.max(self.M.knot_vector)
 
-        xi = np.linspace(xi_min, xi_max, num=50, endpoint=False)
-        eta = np.linspace(eta_min, eta_max, num=50, endpoint=False)
+        xi = np.linspace(xi_min, xi_max, num=50)
+        eta = np.linspace(eta_min, eta_max, num=50)
 
         x, y = np.meshgrid(xi, eta)
 
@@ -439,8 +439,8 @@ class IGA2D(NURBS_2D_Shape_Functions):
         eta_min = np.min(self.R.M.knot_vector)
         eta_max = np.max(self.R.M.knot_vector)
 
-        xi = np.linspace(xi_min, xi_max, num=50, endpoint=False)
-        eta = np.linspace(eta_min, eta_max, num=50, endpoint=False)
+        xi = np.linspace(xi_min, xi_max, num=50)
+        eta = np.linspace(eta_min, eta_max, num=50)
 
         x, y = np.meshgrid(xi, eta)
 
