@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
+import sys
 import numpy as np
 
 from scipy.special import legendre
-from scipy.optimize import fsolve
 import scipy.sparse
 
 import matplotlib.pyplot as plt
@@ -11,21 +11,6 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 
 
-def compute_gauss_points_and_weights(order):
-
-    coefs = legendre(order)
-
-    p = np.poly1d(coefs)  
-
-    coefs_prime = (np.arange(len(coefs) + 1)[::-1] * coefs)[:-1]
-
-    p_prime = np.poly1d(coefs_prime)  
-
-    points = fsolve(p, np.linspace(-1, 1, num=order))
-
-    weights = 2.0 / ((1 - points * points) * p_prime(points) * p_prime(points))
-
-    return points, weights
 
 
 class Bspline(object):
@@ -51,11 +36,10 @@ class Bspline(object):
     def __basis0(self, xi):
         """Order zero basis"""
 
-        cond1 = xi[:, None] == self.knot_vector[1:]
-        cond2 = np.array(self.knot_vector[:-1]) <=  xi[:, None]
-        cond3 = xi[:, None] < np.array(self.knot_vector[1:]) 
+        cond1 = np.array(self.knot_vector[:-1]) <=  xi[:, None]
+        cond2 = xi[:, None] < np.array(self.knot_vector[1:]) 
 
-        return np.where(cond1, 1.0, np.where(cond2 & cond3, 1.0, 0.0))
+        return np.where(cond1 & cond2, 1.0, 0.0)
 
     
     def __basis(self, xi, p, compute_derivatives=False):
@@ -75,6 +59,7 @@ class Bspline(object):
         second_term_numerator = self.knot_vector[(p + 1):] - xi[:, np.newaxis]
         second_term_denominator = (self.knot_vector[(p + 1):] - 
                                    self.knot_vector[1:-p])
+
                 
         
         #Change numerator in last recursion if derivatives are desired
@@ -119,7 +104,7 @@ class Bspline(object):
         x_min = np.min(self.knot_vector)
         x_max = np.max(self.knot_vector)
         
-        x = np.linspace(x_min, x_max, num=1000)
+        x = np.linspace(x_min, x_max, num=1000, endpoint=False)
         
         N = self(x).T
         
@@ -139,7 +124,7 @@ class Bspline(object):
         x_min = np.min(self.knot_vector)
         x_max = np.max(self.knot_vector)
         
-        x = np.linspace(x_min, x_max, num=1000)
+        x = np.linspace(x_min, x_max, num=1000, endpoint=False)
         
         N = self.d(x).T
         
@@ -204,8 +189,8 @@ class NURBS_2D_Shape_Functions(Bspline):
         eta_min = np.min(self.M.knot_vector)
         eta_max = np.max(self.M.knot_vector)
 
-        xi = np.linspace(xi_min, xi_max, num=50)
-        eta = np.linspace(eta_min, eta_max, num=50)
+        xi = np.linspace(xi_min, xi_max, num=50, endpoint=False)
+        eta = np.linspace(eta_min, eta_max, num=50, endpoint=False)
 
         x, y = np.meshgrid(xi, eta)
 
@@ -326,8 +311,8 @@ class IGA2D(NURBS_2D_Shape_Functions):
 
         #Compute the Gauss quadrature points to integrate each shape function
         #to full order
-        xi_, wt_xi_ = compute_gauss_points_and_weights(self.R.N.p + 1)
-        eta_, wt_eta_ = compute_gauss_points_and_weights(self.R.M.p + 1)
+        xi_, wt_xi_ = np.polynomial.legendre.leggauss(self.R.N.p + 1)
+        eta_, wt_eta_ = np.polynomial.legendre.leggauss(self.R.M.p + 1)
 
         #Create all the quadrature point tuples
         xi, eta = np.meshgrid(xi_, eta_)
@@ -408,7 +393,6 @@ class IGA2D(NURBS_2D_Shape_Functions):
                               self.connectivity_array[i])
             self.K[idx_grid]  += ke[i]
 
-
     def apply_bcs(self, basis_ids, values):
 
         row_replace = np.zeros(self.num_of_global_basis_functions)
@@ -439,8 +423,8 @@ class IGA2D(NURBS_2D_Shape_Functions):
         eta_min = np.min(self.R.M.knot_vector)
         eta_max = np.max(self.R.M.knot_vector)
 
-        xi = np.linspace(xi_min, xi_max, num=50)
-        eta = np.linspace(eta_min, eta_max, num=50)
+        xi = np.linspace(xi_min, xi_max, num=50, endpoint=False)
+        eta = np.linspace(eta_min, eta_max, num=50, endpoint=False)
 
         x, y = np.meshgrid(xi, eta)
 
@@ -454,3 +438,176 @@ class IGA2D(NURBS_2D_Shape_Functions):
         plt.clim(0,100)
         plt.axes().set_aspect('equal')
 
+
+class PD1D(Bspline):
+
+    def __init__(self, knot_vector, p, delta):
+        """
+           Initializes 1D isogeometric peridynamics problem
+        """
+
+        self.degree = 10
+
+        self.delta = delta
+
+        self.N = Bspline(knot_vector, p)
+
+
+    def __compute_stiffness(self):
+        """
+           Computes the full stiffness matrix with `degree` integration points
+        """
+       
+        #Ensure even number of quadrature points are used
+        try:
+            if self.degree % 2 != 0:
+                raise ValueError("'degree' must be even to avoid singular kernel evaluation during quadrature.")
+        except ValueError, msg:
+            print(msg)
+            return
+
+        
+        #Generate quadrature points
+        xi, wts = np.polynomial.legendre.leggauss(self.degree)
+
+        #Determine upper and lower bounds for quadrature on each element
+        b = self.N.knot_vector[(self.N.p + 2):-(self.N.p + 1), None]
+        a = self.N.knot_vector[(self.N.p + 1):-(self.N.p + 2), None]
+
+        #The integration points in parameter space
+        x = (((b - a) * xi + b + a) / 2.0).ravel()
+
+        #The total number on integration points over the `elements`, i.e. not
+        #over the horizons
+        num_elem_quad_points = x.shape[0]
+
+        #Evaluate the shape functions at x
+        Nx = self.N(x).reshape(num_elem_quad_points, -1)
+
+        #The upper and lower bounds of integration over each family
+        d = x[:,None] + self.delta
+        c = x[:,None] - self.delta
+
+        #The integration points for each horizon in parameter space
+        y = (((d - c) * xi + d + c) / 2.0)
+
+        #Evaluation shape functions at each y
+        Ny = self.N(y.ravel()).reshape(num_elem_quad_points, xi.shape[0], -1)
+
+        #The total number of global shape functions
+        num_global_sf = Nx.shape[1]
+
+        #Evaluate the "inner" integral over y
+        inner = ((d - c) / 2 * np.sum((Nx[:,None,:] - Ny) / 
+                 np.abs(x[:,None] - y)[:,:,None] * wts[None,:,None], axis=1))
+
+        #The shape of the element stiffness matrix
+        ke_shape = (-1, self.degree, num_global_sf, num_global_sf)
+
+        #Evaluate the outer integral and assemble stiffness matrix
+        self.K = (np.sum((b[:,None] - a[:,None]) / 2 * 
+                  np.sum(np.einsum('...i,...j', Nx, inner).reshape(*ke_shape) * 
+                  wts[None, :, None, None], axis=1), axis=0) / 
+                  self.delta / self.delta)
+
+        return 
+
+
+    def __compute_body_force_term(self, bfun):
+        """
+           Performs quadrature on the RHS of the peridynamic equation with a 
+           given body force funtion, b(x). Quadrature is performed at the same 
+           order of quadrature as the stiffness matrix.
+        """
+
+        #Generate quadrature points
+        xi, wts = np.polynomial.legendre.leggauss(self.degree)
+
+        #Determine upper and lower bounds for quadrature on each element
+        b = self.N.knot_vector[(self.N.p + 2):-(self.N.p + 1), None]
+        a = self.N.knot_vector[(self.N.p + 1):-(self.N.p + 2), None]
+
+        #The integration points in parameter space
+        x = (((b - a) * xi + b + a) / 2.0).ravel()
+
+        #The total number on integration points over the `elements`, i.e. not
+        #over the horizons
+        num_elem_quad_points = x.shape[0]
+
+        #Evaluate shape functions
+        Nx = self.N(x)
+
+        #Total # of shape functions
+        num_global_sf = Nx.shape[1]
+
+        #Evaluate body force function at quadrature points
+        bx = bfun(x)
+
+        #Multiply quadrature weights in
+        Nx = (((b[:,None] - a[:,None]) / 2 * 
+              (Nx.reshape(-1,xi.shape[0], num_global_sf) * 
+               wts[None, :, None])).reshape(-1,num_global_sf))
+
+        #Integrate rhs
+        self.b = np.dot(Nx.T, bx)
+
+
+        return
+
+    def manufacture_solution(self, ufun, num_boundary_elements):
+        """
+           Manufactures a solution on the domain (0,1) from the stiffness 
+           matrix and ufun.  Quadrature performed with `degree` points.
+        """
+
+        nbe = num_boundary_elements
+
+        self.__compute_stiffness()
+        
+        #The stiffness matrix excluding boundary terms
+        A = self.K[nbe:-nbe,nbe:-nbe]
+
+        #Discrete domain
+        x = np.linspace(0.0, 1.0, num=A.shape[0])
+
+        #Evaluate shape functions at discrete points
+        NN = self.N(x)[:,nbe:-nbe]
+        
+        #Manufacture control variables
+        d = np.dot(np.linalg.inv(NN), ufun(x))
+
+        #Manufacture solution
+        self.sol = np.dot(A, d)
+
+        return
+
+
+    def compute_rhs(self, ufun, bfun, number_of_boundary_elements):
+
+        try:
+            if self.K is None:
+                raise ValueError("You must generate the stiffness matrix first")
+        except ValueError, msg:
+            print(msg)
+            return
+
+        nbe = number_of_boundary_elements
+
+        self.__compute_body_force_term(bfun)
+
+        self.rhs = (self.b[nbe:-nbe] - 
+                    np.einsum('...i,i', self.K[nbe:-nbe,0:nbe], 
+                            ufun(np.linspace(-self.delta, 0, num=nbe))) - 
+                    np.einsum('...i,i', self.K[nbe:-nbe,-nbe:], 
+                            ufun(np.linspace(1.0, 1.0 + self.delta, num=nbe))))
+
+
+    def compute_solutions(self, u, b, num_boundary_elements):
+
+        self.manufacture_solution(u, num_boundary_elements)
+        self.compute_rhs(u, b, num_boundary_elements)
+
+
+    def compute_error(self, norm=2):
+
+        return np.linalg.norm(self.sol - self.rhs, ord=norm)
