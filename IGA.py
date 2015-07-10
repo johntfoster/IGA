@@ -462,7 +462,7 @@ class PD1D(Bspline):
         try:
             if self.degree % 2 != 0:
                 raise ValueError("'degree' must be even to avoid singular kernel evaluation during quadrature.")
-        except ValueError, msg:
+        except ValueError as msg:
             print(msg)
             return
 
@@ -587,7 +587,7 @@ class PD1D(Bspline):
         try:
             if self.K is None:
                 raise ValueError("You must generate the stiffness matrix first")
-        except ValueError, msg:
+        except ValueError as msg:
             print(msg)
             return
 
