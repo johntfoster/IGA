@@ -5,6 +5,7 @@ import numpy as np
 
 from scipy.special import legendre
 import scipy.sparse
+from scipy.sparse.linalg import spsolve
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -409,7 +410,7 @@ class IGA2D(NURBS_2D_Shape_Functions):
 
         self.K = scipy.sparse.csr_matrix(self.K)
 
-        self.solution = scipy.sparse.linalg.spsolve(self.K, self.F)
+        self.solution = spsolve(self.K, self.F)
 
     def get_solution(self):
 
@@ -439,6 +440,24 @@ class IGA2D(NURBS_2D_Shape_Functions):
         plt.axes().set_aspect('equal')
 
 
+    def plot_knot_mesh(self):
+        
+        xi_min = np.min(self.R.N.knot_vector)
+        xi_max = np.max(self.R.N.knot_vector)
+
+        eta_min = np.min(self.R.M.knot_vector)
+        eta_max = np.max(self.R.M.knot_vector)
+
+        xi = np.linspace(xi_min, xi_max, num=50, endpoint=False)
+        eta = np.linspace(eta_min, eta_max, num=50, endpoint=False)
+
+        for knot in self.R.M.knot_vector:
+            knot_array = np.ones_like(eta) * knot
+            basis = self.R(knot_array, eta)
+            line_x = np.einsum('...ij,ij', basis, self.x.reshape(basis.shape[1:])).flatten()
+            line_y = np.einsum('...ij,ij', basis, self.y.reshape(basis.shape[1:])).flatten()
+
+
 class PD1D(Bspline):
 
     def __init__(self, knot_vector, p, delta):
@@ -451,6 +470,18 @@ class PD1D(Bspline):
         self.delta = delta
 
         self.N = Bspline(knot_vector, p)
+
+        self.num_of_basis_functions = (self.N.knot_vector.shape[0] - 
+                                       self.N.p - 1)
+
+    def build_connectivity_array(self):
+
+        i_arr = (np.unique(self.N.knot_vector, 
+                 return_counts=True)[1]).cumsum()[:-1] - 1
+
+        index_arr = np.arange(self.N(np.array([0.0])).shape[0], dtype=np.int)
+
+        return np.array([ index_arr[i:(i + self.N.p + 1)] for i in i_arr])
 
 
     def __compute_stiffness(self):
@@ -493,6 +524,7 @@ class PD1D(Bspline):
 
         #Evaluation shape functions at each y
         Ny = self.N(y.ravel()).reshape(num_elem_quad_points, xi.shape[0], -1)
+        print Ny
 
         #The total number of global shape functions
         num_global_sf = Nx.shape[1]
