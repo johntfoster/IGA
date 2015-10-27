@@ -524,7 +524,6 @@ class PD1D(Bspline):
 
         #Evaluation shape functions at each y
         Ny = self.N(y.ravel()).reshape(num_elem_quad_points, xi.shape[0], -1)
-        print Ny
 
         #The total number of global shape functions
         num_global_sf = Nx.shape[1]
@@ -592,18 +591,21 @@ class PD1D(Bspline):
            matrix and ufun.  Quadrature performed with `degree` points.
         """
 
-        nbe = num_boundary_elements
+        #The total number of basis functions in the boundary region
+        nbb = num_boundary_elements * (self.N.p)
 
         self.__compute_stiffness()
         
         #The stiffness matrix excluding boundary terms
-        A = self.K[nbe:-nbe,nbe:-nbe]
+        print(self.K)
+        A = self.K[nbb:-nbb,nbb:-nbb]
+        print(A)
 
         #Discrete domain
-        x = np.linspace(0.0, 1.0, num=A.shape[0])
+        x = np.linspace(0.0, 1.0, num=(A.shape[0] + 1), endpoint=False)[1:]
 
         #Evaluate shape functions at discrete points
-        NN = self.N(x)[:,nbe:-nbe]
+        NN = self.N(x)[:,nbb:-nbb]
         
         #Manufacture control variables
         d = np.dot(np.linalg.inv(NN), ufun(x))
@@ -623,15 +625,16 @@ class PD1D(Bspline):
             print(msg)
             return
 
-        nbe = number_of_boundary_elements
+        #The total number of basis functions in the boundary region
+        nbb = num_boundary_elements * (self.N.p)
 
         self.__compute_body_force_term(bfun)
 
-        self.rhs = (self.b[nbe:-nbe] - 
-                    np.einsum('...i,i', self.K[nbe:-nbe,0:nbe], 
-                            ufun(np.linspace(-self.delta, 0, num=nbe))) - 
-                    np.einsum('...i,i', self.K[nbe:-nbe,-nbe:], 
-                            ufun(np.linspace(1.0, 1.0 + self.delta, num=nbe))))
+        self.rhs = (self.b[nbb:-nbb] - 
+                    np.einsum('...i,i', self.K[nbb:-nbb,0:nbb], 
+                            ufun(np.linspace(-self.delta, 0, num=nbb))) - 
+                    np.einsum('...i,i', self.K[nbb:-nbb,-nbb:], 
+                            ufun(np.linspace(1.0, 1.0 + self.delta, num=nbb))))
 
 
     def compute_solutions(self, u, b, num_boundary_elements):
